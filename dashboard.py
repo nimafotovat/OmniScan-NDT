@@ -10,7 +10,7 @@ from datetime import datetime
 from ultrasonic_engine import UltrasonicSimulationEngine
 from signal_processing import add_gaussian_noise, apply_bandpass_filter
 
-# --- 1. System Configuration & Cyber-UI Styling ---
+
 st.set_page_config(page_title="OmniScan A-Scan | Expert NDT", layout="wide", initial_sidebar_state="expanded")
 
 st.markdown("""
@@ -31,7 +31,7 @@ st.markdown('<div class="cyber-title">🌐 Autonomous A-Scan Command Center</div
 st.markdown('<div class="sub-text">Interactive Digital Oscilloscope, AI Flaw Characterization & Secure PDF Reporting</div>', unsafe_allow_html=True)
 st.markdown("---")
 
-# --- 2. Sidebar Control Panel ---
+
 st.sidebar.header("🎛️ Inspection Parameters")
 
 st.sidebar.subheader("1. Metallurgy Profile")
@@ -67,14 +67,26 @@ ref_R = {"Ø 1.0mm (Strict)": 0.08, "Ø 2.0mm (Standard)": 0.16, "Ø 3.0mm (Rela
 enable_tgc = st.sidebar.checkbox("Enable Digital TGC Gain", value=False)
 tgc_slope = st.sidebar.slider("TGC Slope (dB/mm)", 0.0, 2.5, 0.5, disabled=not enable_tgc)
 
-# --- 3. Physics & Signal Processing Engine ---
+
+st.sidebar.subheader("4. Signal Processing (Proposal)")
+snr_db = st.sidebar.slider("Signal-to-Noise Ratio (SNR dB)", 10.0, 50.0, 30.0, 1.0)
+use_filter = st.sidebar.checkbox("Apply Transducer Bandpass Filter", value=True)
+
+
 probe_freq_hz = probe_freq_mhz * 1e6
-engine = UltrasonicSimulationEngine(velocity, density, base_alpha, thickness_mm/1000.0, 0.01, 100e6)
+fs = 100e6  # Sampling frequency
+engine = UltrasonicSimulationEngine(velocity, density, base_alpha, thickness_mm/1000.0, 0.01, fs)
 defects = [(defect1_depth_mm/1000.0, defect_Z), (defect2_depth_mm/1000.0, defect_Z)]
 
 time_array, complex_echo = engine.simulate_complex_echoes(defects, probe_freq_hz, 0.5)
-noisy_signal = add_gaussian_noise(complex_echo, snr_db=38)
-rf_signal = apply_bandpass_filter(noisy_signal, probe_freq_hz*0.4, probe_freq_hz*1.6, 100e6, 4)
+
+
+noisy_signal = add_gaussian_noise(complex_echo, snr_db=snr_db)
+if use_filter:
+    rf_signal = apply_bandpass_filter(noisy_signal, fs, center_freq=probe_freq_hz, bandwidth_percent=0.5, order=5)
+else:
+    rf_signal = noisy_signal
+
 depth_array = (time_array * velocity / 2) * 1000
 dac_curve = engine.generate_dac_curve(time_array, probe_freq_hz, ref_R)
 
@@ -109,7 +121,7 @@ for i in peaks_indices:
 
 is_rejected = len(critical_defects) > 0
 
-# --- 4. Dashboard Global Metrics ---
+
 m1, m2, m3, m4 = st.columns(4)
 m1.markdown(f'<div class="metric-card"><div class="label-text">Acoustic Impedance</div><div class="value-text">{(velocity*density)/1e6:.2f} MRayl</div></div>', unsafe_allow_html=True)
 m2.markdown(f'<div class="metric-card"><div class="label-text">Wavelength (λ)</div><div class="value-text">{(velocity/probe_freq_hz)*1000:.3f} mm</div></div>', unsafe_allow_html=True)
@@ -123,19 +135,19 @@ else:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- ANTI-IDM STEALTH ENGINE (Tracking Slider Changes) ---
-current_params = (velocity, density, base_alpha, thickness_mm, defect1_depth_mm, defect2_depth_mm, defect_filler, probe_freq_mhz, dac_ref_size, enable_tgc, tgc_slope)
+
+current_params = (velocity, density, base_alpha, thickness_mm, defect1_depth_mm, defect2_depth_mm, defect_filler, probe_freq_mhz, dac_ref_size, enable_tgc, tgc_slope, snr_db, use_filter)
 
 if "prev_params" not in st.session_state:
     st.session_state.prev_params = current_params
     st.session_state.export_ready = False
 
-# اگر کاربر اسلایدرها را حرکت داد، فایل‌های دانلود قفل می‌شوند تا IDM مزاحم نشود
+
 if st.session_state.prev_params != current_params:
     st.session_state.export_ready = False
     st.session_state.prev_params = current_params
 
-# --- 5. Interactive Dashboard Tabs ---
+
 tab1, tab2, tab3, tab4 = st.tabs(["📟 AI Diagnostic Oscilloscope", "🛠️ Engineering Recalibration", "🔬 Spectral Physics Lab", "📑 Secure Reporting"])
 
 with tab1:
@@ -206,6 +218,31 @@ with tab3:
     p_col2.metric("Effective Attenuation (α)", f"{alpha_eff_np:.3f} Np/m")
     p_col3.metric("Reflection Energy Coefficient", f"{r_coeff:.4f}")
     
+
+    st.markdown("### 🧮 Analytical Validation ($t = 2d/v$ & Exponential Attenuation)")
+    
+    # 1. محاسبه زمان تحلیلی (Theoretical Time)
+    t_flaw1_us = (2 * (defect1_depth_mm / 1000.0) / velocity) * 1e6
+    t_flaw2_us = (2 * (defect2_depth_mm / 1000.0) / velocity) * 1e6
+    t_bwe_us = (2 * (thickness_mm / 1000.0) / velocity) * 1e6
+    
+  
+  
+    A0 = 1.0  
+    amp_flaw1 = A0 * np.exp(-alpha_eff_np * (2 * (defect1_depth_mm / 1000.0))) * abs(r_coeff)
+    amp_flaw2 = A0 * np.exp(-alpha_eff_np * (2 * (defect2_depth_mm / 1000.0))) * abs(r_coeff)
+   
+    amp_bwe = A0 * np.exp(-alpha_eff_np * (2 * (thickness_mm / 1000.0))) * 1.0 
+    
+    val_data = {
+        "Reflector Target": ["Flaw 1", "Flaw 2", "Back-wall (BWE)"],
+        "Depth 'd' (mm)": [defect1_depth_mm, defect2_depth_mm, thickness_mm],
+        "Theoretical ToF 't' (µs)": [f"{t_flaw1_us:.3f}", f"{t_flaw2_us:.3f}", f"{t_bwe_us:.3f}"],
+        "Expected Amplitude (A)": [f"{amp_flaw1:.4f} V", f"{amp_flaw2:.4f} V", f"{amp_bwe:.4f} V"]
+    }
+    st.table(pd.DataFrame(val_data))
+    
+
     N = len(rf_signal)
     yf = fft(rf_signal)
     xf = fftfreq(N, 1/100e6)
@@ -217,7 +254,7 @@ with tab3:
     fig_fft.update_layout(template="plotly_dark", plot_bgcolor='#0E1117', paper_bgcolor='#0E1117', xaxis_title="Frequency (MHz)", yaxis_title="Spectral Power", xaxis=dict(range=[0, probe_freq_mhz*2.2]), height=300, margin=dict(l=0,r=0,t=10,b=0))
     st.plotly_chart(fig_fft, use_container_width=True)
 
-# --- 6. The IDM-Bulletproof PDF Generator ---
+
 with tab4:
     st.markdown("### 📑 Secure Inspection Report Generator")
     st.info("💡 **Stealth Mode Active:** Files are locked and hidden from download managers until you click the Compile button.")
@@ -278,13 +315,13 @@ with tab4:
             
         return pdf.output(dest='S').encode('latin-1')
 
-    # مکانیزم امنیتی: دکمه دانلود تا قبل از کامپایل مخفی است
+  
     if not st.session_state.export_ready:
         if st.button("⚙️ Compile & Build PDF Report", use_container_width=True):
             st.session_state.pdf_bytes = generate_pdf_in_memory()
             st.session_state.csv_bytes = pd.DataFrame({"Depth_mm": depth_array, "RF_Voltage": rf_signal, "Envelope": signal_envelope, "DAC_Curve": dac_curve}).to_csv(index=False).encode('utf-8')
             st.session_state.export_ready = True
-            st.rerun() # بازخوانی امن برای نمایش دکمه‌های دانلود
+            st.rerun() 
 
     if st.session_state.export_ready:
         st.success("✅ Files successfully compiled and temporarily unlocked for download!")
@@ -296,7 +333,7 @@ with tab4:
             use_container_width=True
         )
 
-# --- 7. Secure Data Export (CSV) ---
+
 st.markdown("---")
 if st.session_state.export_ready:
     st.download_button("📥 Download Raw Data Matrix (.csv)", data=st.session_state.csv_bytes, file_name="NDT_Raw_Data.csv", mime="text/csv")

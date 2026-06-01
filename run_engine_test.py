@@ -1,14 +1,11 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# وارد کردن کلاس موتور شبیه‌ساز که در مرحله قبل ساختیم
 from ultrasonic_engine import UltrasonicSimulationEngine
 
-# ۱. تعریف خواص فیزیکی قطعه (فرض: فولاد کربنی استاندارد صنعتی)
 STEEL_VELOCITY = 5900.0      # سرعت صوت در فولاد (متر بر ثانیه)
 STEEL_ATTENUATION = 1.5      # ضریب تضعیف موج در فولاد (نپر بر متر)
 
-# ۲. راه‌اندازی موتور اصلی
 engine = UltrasonicSimulationEngine(
     sound_velocity=STEEL_VELOCITY,
     attenuation_coeff=STEEL_ATTENUATION

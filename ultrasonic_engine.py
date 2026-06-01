@@ -43,7 +43,7 @@ class UltrasonicSimulationEngine:
         total_signal = np.zeros_like(time_array)
         alpha_f = self.calculate_effective_attenuation(probe_freq)
         
-        # محاسبه سیگنال عیوب
+       
         for depth, defect_impedance in defects: 
             if depth >= self.thickness: continue 
             tof = (2 * depth) / self.velocity
@@ -55,7 +55,7 @@ class UltrasonicSimulationEngine:
             pulse = generate_gaussian_pulse(time_array, probe_freq, bw_factor, tof, amplitude)
             total_signal += pulse
             
-        # محاسبه سیگنال دیواره پشتی (تماس فلز با هوا)
+       
         Z_air = 400.0 
         R_backwall = self.calculate_reflection_coeff(Z_air)
         bw_tof = (2 * self.thickness) / self.velocity
@@ -75,7 +75,7 @@ class UltrasonicSimulationEngine:
         
         dac_curve = np.zeros_like(depth_array)
         for i, d in enumerate(depth_array):
-            if d <= 0.001: # چشم‌پوشی از 1 میلی‌متر اول (Dead Zone)
+            if d <= 0.001: 
                 dac_curve[i] = reference_R
                 continue
             material_loss = np.exp(-alpha_f * (2 * d))
