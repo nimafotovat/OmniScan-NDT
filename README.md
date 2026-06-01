@@ -23,15 +23,20 @@ The core engine mathematically models acoustic wave propagation, beam divergence
 - **Digital TGC Integration:** Time-Gain Compensation circuitry simulation to counteract exponential depth attenuation.
 
 ### 🛡️ 3. Secure Enterprise Reporting
-- **In-Memory PDF Generation:** Compiles tamper-proof, dynamically generated official inspection reports directly in the RAM (bypassing local storage security risks and download manager conflicts).
+- **In-Memory PDF Generation:** Compiles tamper-proof, dynamically generated official inspection reports directly in the RAM.
 - **Stealth Export:** Raw CSV data matrices and PDFs are strictly protected and isolated within the session state until manual verification.
+
+### 🎓 4. Analytical Validation (Physics-Based Integrity)
+- **Time-of-Flight (ToF) Accuracy:** The system validates simulated echo arrival times against the theoretical law $t = 2d/v$.
+- **Attenuation Verification:** Implements exponential decay models ($A = A_0 e^{-\alpha x}$) to ensure signal amplitude fidelity in deep-flaw scenarios.
+- **Zero-Phase Filtering:** Uses `filtfilt` signal processing to prevent phase-shifting artifacts, ensuring strict alignment with theoretical wave propagation timings.
 
 ---
 
 ## ⚙️ Core Physics Engine Mechanics
 The simulation is built upon fundamental acoustic principles:
 - **Acoustic Impedance ($Z$):** $Z = \rho \times V$
-- **Reflection Coefficient ($R$):** $R = \frac{Z_2 - Z_1}{Z_2 + Z_1}$ (Accounts for $180^\circ$ phase shifts when evaluating low-impedance flaws).
+- **Reflection Coefficient ($R$):** $R = \frac{Z_2 - Z_1}{Z_2 + Z_1}$
 - **Near-Field Length ($N$):** $N = \frac{D^2 \times f}{4 \times V}$
 
 ---
@@ -46,7 +51,3 @@ Ensure you have Python 3.8+ installed. It is highly recommended to use a virtual
    ```bash
    git clone [https://github.com/YourUsername/OmniScan-NDT.git](https://github.com/YourUsername/OmniScan-NDT.git)
    cd OmniScan-NDT
-## 📊 Visual Interface
-![Dashboard Preview](images/my_dashboard.png)
-
-*Interactive A-Scan Analysis Panel and AI Diagnostic Dashboard.*
