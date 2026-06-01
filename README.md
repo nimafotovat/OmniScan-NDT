@@ -46,3 +46,7 @@ Ensure you have Python 3.8+ installed. It is highly recommended to use a virtual
    ```bash
    git clone [https://github.com/YourUsername/OmniScan-NDT.git](https://github.com/YourUsername/OmniScan-NDT.git)
    cd OmniScan-NDT
+## 📊 Visual Interface
+![Dashboard Preview](images/my_dashboard.png)
+
+*Interactive A-Scan Analysis Panel and AI Diagnostic Dashboard.*
