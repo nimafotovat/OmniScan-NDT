@@ -2,7 +2,7 @@
 
 **Non-Destructive Testing (NDT)** 
 
-**Scope:**one-dimensional pulse-echo.
+**Scope:** one-dimensional pulse-echo.
 
 ---
 
