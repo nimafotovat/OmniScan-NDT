@@ -1,6 +1,7 @@
 # Development of a Python-Based Simulator for Ultrasonic Pulse-Echo A-Scan Signal
 
-**Non-Destructive Testing (NDT)** **Scope:** one-dimensional pulse-echo.
+**Non-Destructive Testing (NDT)** 
+**Scope:**one-dimensional pulse-echo.
 
 ---
 
@@ -24,7 +25,9 @@ Pulse-echo ultrasonics records a one-dimensional time waveform (A-Scan) whose ec
 
 The transmitted particle velocity is approximated as
 
-$$s(t) = A \, \exp\!\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t), \qquad \sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}.$$
+$$
+s(t) = A \, \exp\!\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t), \qquad \sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}
+$$
 
 Implementation: `wave_math.generate_gaussian_pulse`.
 
@@ -32,7 +35,9 @@ Implementation: `wave_math.generate_gaussian_pulse`.
 
 Round-trip travel time to depth $d$:
 
-$$t = \frac{2d}{v}.$$
+$$
+t = \frac{2d}{v}
+$$
 
 Depth axis for plotting: $d = tv/2$. Implementation: `UltrasonicSimulationEngine.depth_to_tof`.
 
@@ -40,7 +45,9 @@ Depth axis for plotting: $d = tv/2$. Implementation: `UltrasonicSimulationEngine
 
 Echo amplitude is scaled by exponential material loss along the round-trip path $2d$:
 
-$$A_{\mathrm{mat}} = \exp(-\alpha(f)\, 2d), \qquad \alpha(f) = \alpha_0 \left(\frac{f}{1\,\mathrm{MHz}}\right)^{1.5}.$$
+$$
+A_{\mathrm{mat}} = \exp(-\alpha(f)\, 2d), \qquad \alpha(f) = \alpha_0 \left(\frac{f}{1\,\mathrm{MHz}}\right)^{1.5}
+$$
 
 A simplified beam-spread factor reduces amplitude beyond the near-field distance $N = D^2 f / (4v)$.
 
@@ -48,7 +55,9 @@ A simplified beam-spread factor reduces amplitude beyond the near-field distance
 
 Normal-incidence pressure reflection coefficient between specimen impedance $Z_p = \rho v$ and defect impedance $Z_d$:
 
-$$R = \frac{Z_d - Z_p}{Z_d + Z_p}.$$
+$$
+R = \frac{Z_d - Z_p}{Z_d + Z_p}
+$$
 
 **No absolute value is applied to $R$** when synthesizing RF echoes; negative $R$ inverts the echo polarity (phase inversion for low-impedance voids). The Hilbert envelope $|\mathcal{H}\{s(t)\}|$ uses magnitude **only** for peak detection and DAC comparison, which is standard in flaw sizing workflows.
 
@@ -109,7 +118,7 @@ Optional figures: `python run_pulse_test.py`, `run_engine_test.py`, `run_final_a
 
 1. **A-Scan display** — RF (signed), envelope, DAC reference; vertical markers at flaw depths and back-wall.
 2. **DAC sensitivity** — indicates whether alternate reference amplitudes would clear detected peaks.
-3. **Analytical validation** — table of ToF, signed \(R\), signed theoretical amplitude, measured peak depth, depth error; FFT of processed RF.
+3. **Analytical validation** — table of ToF, signed $R$, signed theoretical amplitude, measured peak depth, depth error; FFT of processed RF.
 4. **Report export** — PDF summary and CSV time series.
 
 Recommended defense scenario: steel, 70 mm thickness, flaws at 25 mm and 50 mm (air + water fills), 5 MHz probe, SNR 30 dB, filter enabled.
@@ -118,8 +127,8 @@ Recommended defense scenario: steel, 70 mm thickness, flaws at 25 mm and 50 mm (
 
 ## 7. Results and discussion (template for thesis / ISI draft)
 
-- Echo arrival depths align with \(t=2d/v\) within discretization error (see validation table metric *Max depth error*).
-- Air-filled reflectors produce \(R \approx -1\) and inverted RF polarity; water in steel produces weaker negative \(R\) but still phase-inverted relative to a high-impedance inclusion.
+- Echo arrival depths align with $t = 2d/v$ within discretization error (see validation table metric *Max depth error*).
+- Air-filled reflectors produce $R \approx -1$ and inverted RF polarity; water in steel produces weaker negative $R$ but still phase-inverted relative to a high-impedance inclusion.
 - Bandpass filtering preserves ToF (zero-phase `filtfilt`) while concentrating spectral energy near the probe center frequency.
 - Limitations: 1-D superposition, no mode conversion, no near-surface creep, no true ASME DAC block calibration, educational DAC reference only.
 
@@ -133,7 +142,7 @@ The simulator fulfills the approved proposal scope: Python implementation of a *
 
 ## 9. Future work (journal extension path)
 
-- Laboratory calibration of \(\alpha_0\) and bandwidth from reference echoes.
+- Laboratory calibration of $\alpha_0$ and bandwidth from reference echoes.
 - Frequency-dependent probe aperture model.
 - Stochastic grain noise and repeatable Monte Carlo receiver studies.
 - Coupled 2-D wave solvers (outside current repository scope).
