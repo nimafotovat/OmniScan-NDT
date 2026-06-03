@@ -1,13 +1,12 @@
 # Development of a Python-Based Simulator for Ultrasonic Pulse-Echo A-Scan Signal
 
-**Non-Destructive Testing (NDT)**  
-**Scope:** one-dimensional pulse-echo.
+**Non-Destructive Testing (NDT)** **Scope:** one-dimensional pulse-echo.
 
 ---
 
 ## Abstract
 
-A numerical simulator was implemented in Python to model the ultrasonic pulse-echo chain used in contact inspection of homogeneous specimens. The tool generates a synthetic **A-Scan** voltage trace as a function of time or depth by sequentially modeling (i) transducer excitation as a Gaussian-modulated sinusoid, (ii) one-way and round-trip travel time with material velocity and exponential attenuation, (iii) reflection from planar discontinuities through the normal-incidence pressure reflection coefficient, and (iv) receiver processing including additive Gaussian noise and zero-phase bandpass filtering. The interactive dashboard plots the radio-frequency (RF) trace, its Hilbert envelope, and a depth-dependent reference curve for amplitude comparison. Analytical checks verify echo arrival times via \(t = 2d/v\) and peak depths against user-defined reflector locations. The software is intended for parameter studies before laboratory work and as a reproducible baseline for future journal extensions (e.g., probe models, scattering, or 2-D field solvers) without altering the present 1-D scope.
+A numerical simulator was implemented in Python to model the ultrasonic pulse-echo chain used in contact inspection of homogeneous specimens. The tool generates a synthetic **A-Scan** voltage trace as a function of time or depth by sequentially modeling (i) transducer excitation as a Gaussian-modulated sinusoid, (ii) one-way and round-trip travel time with material velocity and exponential attenuation, (iii) reflection from planar discontinuities through the normal-incidence pressure reflection coefficient, and (iv) receiver processing including additive Gaussian noise and zero-phase bandpass filtering. The interactive dashboard plots the radio-frequency (RF) trace, its Hilbert envelope, and a depth-dependent reference curve for amplitude comparison. Analytical checks verify echo arrival times via $t = 2d/v$ and peak depths against user-defined reflector locations. The software is intended for parameter studies before laboratory work and as a reproducible baseline for future journal extensions (e.g., probe models, scattering, or 2-D field solvers) without altering the present 1-D scope.
 
 **Keywords:** ultrasonic testing, pulse-echo, A-Scan, acoustic impedance, reflection coefficient, Hilbert envelope, Python simulation
 
@@ -25,52 +24,40 @@ Pulse-echo ultrasonics records a one-dimensional time waveform (A-Scan) whose ec
 
 The transmitted particle velocity is approximated as
 
-\[
-s(t) = A \, \exp\!\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t),
-\qquad
-\sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}.
-\]
+$$s(t) = A \, \exp\!\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t), \qquad \sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}.$$
 
 Implementation: `wave_math.generate_gaussian_pulse`.
 
 ### 2.2 Time of flight (depth axis)
 
-Round-trip travel time to depth \(d\):
+Round-trip travel time to depth $d$:
 
-\[
-t = \frac{2d}{v}.
-\]
+$$t = \frac{2d}{v}.$$
 
-Depth axis for plotting: \(d = tv/2\). Implementation: `UltrasonicSimulationEngine.depth_to_tof`.
+Depth axis for plotting: $d = tv/2$. Implementation: `UltrasonicSimulationEngine.depth_to_tof`.
 
 ### 2.3 Attenuation
 
-Echo amplitude is scaled by exponential material loss along the round-trip path \(2d\):
+Echo amplitude is scaled by exponential material loss along the round-trip path $2d$:
 
-\[
-A_{\mathrm{mat}} = \exp(-\alpha(f)\, 2d),
-\qquad
-\alpha(f) = \alpha_0 \left(\frac{f}{1\,\mathrm{MHz}}\right)^{1.5}.
-\]
+$$A_{\mathrm{mat}} = \exp(-\alpha(f)\, 2d), \qquad \alpha(f) = \alpha_0 \left(\frac{f}{1\,\mathrm{MHz}}\right)^{1.5}.$$
 
-A simplified beam-spread factor reduces amplitude beyond the near-field distance \(N = D^2 f / (4v)\).
+A simplified beam-spread factor reduces amplitude beyond the near-field distance $N = D^2 f / (4v)$.
 
 ### 2.4 Reflection coefficient (phase preserved)
 
-Normal-incidence pressure reflection coefficient between specimen impedance \(Z_p = \rho v\) and defect impedance \(Z_d\):
+Normal-incidence pressure reflection coefficient between specimen impedance $Z_p = \rho v$ and defect impedance $Z_d$:
 
-\[
-R = \frac{Z_d - Z_p}{Z_d + Z_p}.
-\]
+$$R = \frac{Z_d - Z_p}{Z_d + Z_p}.$$
 
-**No absolute value is applied to \(R\)** when synthesizing RF echoes; negative \(R\) inverts the echo polarity (phase inversion for low-impedance voids). The Hilbert envelope \(|\mathcal{H}\{s(t)\}|\) uses magnitude **only** for peak detection and DAC comparison, which is standard in flaw sizing workflows.
+**No absolute value is applied to $R$** when synthesizing RF echoes; negative $R$ inverts the echo polarity (phase inversion for low-impedance voids). The Hilbert envelope $|\mathcal{H}\{s(t)\}|$ uses magnitude **only** for peak detection and DAC comparison, which is standard in flaw sizing workflows.
 
-Preset impedances (Rayl): air \(\approx 4\times10^2\), water \(\approx 1.5\times10^6\). Back-wall echo uses a steel–air interface at the far boundary.
+Preset impedances (Rayl): air $\approx 4\times10^2$, water $\approx 1.5\times10^6$. Back-wall echo uses a steel–air interface at the far boundary.
 
 ### 2.5 Receiver processing
 
 - Additive white Gaussian noise at a user-defined peak SNR (dB).
-- Butterworth bandpass, `scipy.signal.filtfilt` (zero phase) over fractional bandwidth about \(f_c\).
+- Butterworth bandpass, `scipy.signal.filtfilt` (zero phase) over fractional bandwidth about $f_c$.
 
 ---
 
@@ -94,10 +81,10 @@ Legacy method names (`simulate_complex_echoes`, `generate_dac_curve`, etc.) rema
 
 Validation follows the project proposal: compare simulated results with analytical expectations.
 
-1. **Time law:** compute \(t = 2d/v\) for each programmed reflector and report in the validation table.
-2. **Amplitude law:** compute \(A = R \exp(-\alpha 2d)\,B(d)\) with the same \(\alpha\) and beam factor \(B\) used in synthesis; **signed** \(R\) and **signed** theoretical amplitude are listed.
-3. **Depth error:** locate the envelope peak in a local depth window around each reflector; report \(\Delta d = d_{\mathrm{meas}} - d_{\mathrm{input}}\).
-4. **Automated tests:** `pytest` checks negative \(R\) for air in steel, monotonic decay with depth, and peak depth within 2 mm of input for a steel reference case.
+1. **Time law:** compute $t = 2d/v$ for each programmed reflector and report in the validation table.
+2. **Amplitude law:** compute $A = R \exp(-\alpha 2d)\,B(d)$ with the same $\alpha$ and beam factor $B$ used in synthesis; **signed** $R$ and **signed** theoretical amplitude are listed.
+3. **Depth error:** locate the envelope peak in a local depth window around each reflector; report $\Delta d = d_{\mathrm{meas}} - d_{\mathrm{input}}$.
+4. **Automated tests:** `pytest` checks negative $R$ for air in steel, monotonic decay with depth, and peak depth within 2 mm of input for a steel reference case.
 5. **Null case:** empty defect list yields dominant back-wall peak near specimen thickness.
 
 Acceptance in the dashboard is defined as absence of mid-wall envelope peaks above the educational DAC reference curve (not a substitute for code-compliant ASME Section V qualification).
