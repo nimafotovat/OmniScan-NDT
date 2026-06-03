@@ -1,5 +1,5 @@
 @echo off
-title OmniScan-NDT Simulator Launcher
+title Ultrasonic A-Scan Simulator
 echo ===================================================
 echo Starting Ultrasonic Simulation Dashboard...
 echo Please wait while the local server starts.

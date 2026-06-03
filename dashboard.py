@@ -2,340 +2,397 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from scipy.signal import find_peaks, hilbert
+from scipy.signal import find_peaks
 from scipy.fft import fft, fftfreq
 from fpdf import FPDF
 from datetime import datetime
 
-from ultrasonic_engine import UltrasonicSimulationEngine
-from signal_processing import add_gaussian_noise, apply_bandpass_filter
+from ultrasonic_engine import UltrasonicSimulationEngine, Z_AIR
+from ascan_pipeline import (
+    run_ascan_pipeline,
+    filler_to_impedance,
+    min_peak_distance_samples,
+    match_nearest_defect,
+    classify_reflector,
+)
+
+PROJECT_TITLE = (
+    "Development of a Python-Based Simulator for "
+    "Ultrasonic Pulse-Echo A-Scan Signal"
+)
+
+CHART = dict(
+    template="plotly_white",
+    font=dict(family="Libertinus Serif, Times New Roman, serif", size=12),
+    margin=dict(l=48, r=24, t=48, b=48),
+    hovermode="x unified",
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, x=1, xanchor="right"),
+)
+COLORS = {
+    "rf": "rgba(46, 90, 136, 0.45)",
+    "rf_line": "#2E5A88",
+    "envelope": "#A93226",
+    "dac": "#566573",
+    "marker": "#117A65",
+    "fft": "#6C3483",
+}
 
 
-st.set_page_config(page_title="OmniScan A-Scan | Expert NDT", layout="wide", initial_sidebar_state="expanded")
-
-st.markdown("""
-    <style>
-    .cyber-title { font-size: 2.6rem; font-weight: 900; background: -webkit-linear-gradient(45deg, #00FFCC, #0077FF); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 0px;}
-    .sub-text { font-size: 1.1rem; color: #8A9BA8; margin-bottom: 25px;}
-    .metric-card { background: #11141A; padding: 18px; border-radius: 12px; border: 1px solid #2B3040; border-top: 4px solid #00FFCC; text-align: center; box-shadow: 0 6px 12px rgba(0,0,0,0.4); }
-    .value-text { font-size: 22px; font-weight: bold; color: #FFFFFF; }
-    .label-text { font-size: 12px; color: #A0AEC0; text-transform: uppercase; letter-spacing: 1px;}
-    .ai-box-danger { background: rgba(255, 51, 102, 0.1); padding: 15px; border-radius: 10px; border: 1px solid #FF3366; margin-bottom: 10px; }
-    .ai-box-success { background: rgba(0, 255, 204, 0.1); padding: 15px; border-radius: 10px; border: 1px solid #00FFCC; margin-bottom: 10px; }
-    .badge-danger { background-color: #FF3366; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
-    .badge-info { background-color: #0077FF; color: white; padding: 3px 8px; border-radius: 5px; font-size: 11px; font-weight: bold; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown('<div class="cyber-title">🌐 Autonomous A-Scan Command Center</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-text">Interactive Digital Oscilloscope, AI Flaw Characterization & Secure PDF Reporting</div>', unsafe_allow_html=True)
-st.markdown("---")
+def pdf_to_bytes(pdf):
+    raw = pdf.output(dest="S")
+    return bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw.encode("latin-1")
 
 
-st.sidebar.header("🎛️ Inspection Parameters")
-
-st.sidebar.subheader("1. Metallurgy Profile")
-material_choice = st.sidebar.selectbox("Material Preset", ["Steel (Carbon)", "Aluminum (6061)", "Copper (Pure)", "PVC Plastic", "Custom Input"])
-
-if material_choice == "Custom Input":
-    velocity = st.sidebar.number_input("Velocity (m/s)", 1000.0, 10000.0, 5900.0, 50.0)
-    density = st.sidebar.number_input("Density (kg/m³)", 500.0, 20000.0, 7800.0, 50.0)
-    base_alpha = st.sidebar.number_input("Attenuation (Np/m)", 0.1, 20.0, 1.5, 0.1)
-else:
-    presets = {
-        "Steel (Carbon)": (5900.0, 7800.0, 1.5), 
-        "Aluminum (6061)": (6320.0, 2700.0, 1.2), 
-        "Copper (Pure)": (4700.0, 8960.0, 2.0), 
-        "PVC Plastic": (2395.0, 1380.0, 4.5)
-    }
-    velocity, density, base_alpha = presets[material_choice]
-    st.sidebar.info(f"**Properties:**\nVel: {velocity} m/s | ρ: {density} kg/m³")
-
-thickness_mm = st.sidebar.slider("Part Thickness (mm)", 15.0, 120.0, 70.0)
-
-st.sidebar.subheader("2. Flaw Simulator")
-defect1_depth_mm = st.sidebar.slider("Flaw 1 Depth (mm)", 3.0, thickness_mm-3.0, 25.0)
-defect2_depth_mm = st.sidebar.slider("Flaw 2 Depth (mm)", 3.0, thickness_mm-3.0, 50.0)
-defect_filler = st.sidebar.radio("Defect Core Medium:", ["Air Void (Crack)", "Water Inclusion (Slag)"])
-defect_Z = 400.0 if defect_filler == "Air Void (Crack)" else 1.48e6
-
-st.sidebar.subheader("3. Transducer Electronics")
-probe_freq_mhz = st.sidebar.slider("Probe Frequency (MHz)", 1.0, 10.0, 5.0, 0.5)
-dac_ref_size = st.sidebar.selectbox("ASME Calibration Standard", ["Ø 1.0mm (Strict)", "Ø 2.0mm (Standard)", "Ø 3.0mm (Relaxed)"])
-ref_R = {"Ø 1.0mm (Strict)": 0.08, "Ø 2.0mm (Standard)": 0.16, "Ø 3.0mm (Relaxed)": 0.28}[dac_ref_size]
-
-enable_tgc = st.sidebar.checkbox("Enable Digital TGC Gain", value=False)
-tgc_slope = st.sidebar.slider("TGC Slope (dB/mm)", 0.0, 2.5, 0.5, disabled=not enable_tgc)
+def ascii_safe(text):
+    return text.encode("ascii", errors="replace").decode("ascii")
 
 
-st.sidebar.subheader("4. Signal Processing (Proposal)")
-snr_db = st.sidebar.slider("Signal-to-Noise Ratio (SNR dB)", 10.0, 50.0, 30.0, 1.0)
-use_filter = st.sidebar.checkbox("Apply Transducer Bandpass Filter", value=True)
+def value_at_depth(depth_array, signal, depth_mm):
+    idx = int(np.argmin(np.abs(depth_array - float(depth_mm))))
+    return float(signal[idx]), idx
 
 
-probe_freq_hz = probe_freq_mhz * 1e6
-fs = 100e6  # Sampling frequency
-engine = UltrasonicSimulationEngine(velocity, density, base_alpha, thickness_mm/1000.0, 0.01, fs)
-defects = [(defect1_depth_mm/1000.0, defect_Z), (defect2_depth_mm/1000.0, defect_Z)]
-
-time_array, complex_echo = engine.simulate_complex_echoes(defects, probe_freq_hz, 0.5)
-
-
-noisy_signal = add_gaussian_noise(complex_echo, snr_db=snr_db)
-if use_filter:
-    rf_signal = apply_bandpass_filter(noisy_signal, fs, center_freq=probe_freq_hz, bandwidth_percent=0.5, order=5)
-else:
-    rf_signal = noisy_signal
-
-depth_array = (time_array * velocity / 2) * 1000
-dac_curve = engine.generate_dac_curve(time_array, probe_freq_hz, ref_R)
-
-if enable_tgc:
-    tgc_gain = 10 ** ((tgc_slope * depth_array) / 20)
-    rf_signal *= tgc_gain
-    dac_curve *= tgc_gain
-
-analytic_signal = hilbert(rf_signal)
-signal_envelope = np.abs(analytic_signal)
-r_coeff = engine.calculate_reflection_coeff(defect_Z)
-
-# AI Defect Identification
-peaks_indices, _ = find_peaks(signal_envelope, height=dac_curve, distance=500)
-critical_defects = []
-for i in peaks_indices:
-    d_mm = depth_array[i]
-    if 3.0 < d_mm < (thickness_mm - 2.0):
-        if r_coeff < 0:
-            flaw_type = "Air-Filled Crack / Void"
-            severity = "CRITICAL (Severe Reflection)"
-        else:
-            flaw_type = "Solid Slag / Inclusion"
-            severity = "WARNING (Medium Reflection)"
-            
-        location_cat = "Near-Surface" if d_mm < 10.0 else "Near Back-wall" if d_mm > (thickness_mm - 10.0) else "Mid-Core"
-            
-        critical_defects.append({
-            "depth": round(d_mm, 2), "amp": round(signal_envelope[i], 3), 
-            "limit": round(dac_curve[i], 3), "type": flaw_type, "location": location_cat
-        })
-
-is_rejected = len(critical_defects) > 0
-
-
-m1, m2, m3, m4 = st.columns(4)
-m1.markdown(f'<div class="metric-card"><div class="label-text">Acoustic Impedance</div><div class="value-text">{(velocity*density)/1e6:.2f} MRayl</div></div>', unsafe_allow_html=True)
-m2.markdown(f'<div class="metric-card"><div class="label-text">Wavelength (λ)</div><div class="value-text">{(velocity/probe_freq_hz)*1000:.3f} mm</div></div>', unsafe_allow_html=True)
-
-if is_rejected:
-    m3.markdown('<div class="metric-card" style="border-top: 4px solid #FF3366;"><div class="label-text">AI Disposition</div><div class="value-text" style="color:#FF3366;">🚨 REJECTED</div></div>', unsafe_allow_html=True)
-    m4.markdown(f'<div class="metric-card" style="border-top: 4px solid #FF3366;"><div class="label-text">Critical Flaws</div><div class="value-text" style="color:#FF3366;">{len(critical_defects)} Detected</div></div>', unsafe_allow_html=True)
-else:
-    m3.markdown('<div class="metric-card" style="border-top: 4px solid #00FFCC;"><div class="label-text">AI Disposition</div><div class="value-text" style="color:#00FFCC;">✅ CERTIFIED</div></div>', unsafe_allow_html=True)
-    m4.markdown('<div class="metric-card" style="border-top: 4px solid #00FFCC;"><div class="label-text">Critical Flaws</div><div class="value-text" style="color:#00FFCC;">0 Detected</div></div>', unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-
-current_params = (velocity, density, base_alpha, thickness_mm, defect1_depth_mm, defect2_depth_mm, defect_filler, probe_freq_mhz, dac_ref_size, enable_tgc, tgc_slope, snr_db, use_filter)
-
-if "prev_params" not in st.session_state:
-    st.session_state.prev_params = current_params
-    st.session_state.export_ready = False
-
-
-if st.session_state.prev_params != current_params:
-    st.session_state.export_ready = False
-    st.session_state.prev_params = current_params
-
-
-tab1, tab2, tab3, tab4 = st.tabs(["📟 AI Diagnostic Oscilloscope", "🛠️ Engineering Recalibration", "🔬 Spectral Physics Lab", "📑 Secure Reporting"])
-
-with tab1:
-    graph_side, ai_side = st.columns([1.8, 1.2])
-    
-    with graph_side:
-        st.markdown("**Interactive Plotly A-Scan Matrix**")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=depth_array, y=rf_signal, mode='lines', name='RF Waveform', line=dict(color='#00FFCC', width=1), opacity=0.4))
-        fig.add_trace(go.Scatter(x=depth_array, y=signal_envelope, mode='lines', name='Hilbert Envelope', line=dict(color='#B366FF', width=2.5)))
-        fig.add_trace(go.Scatter(x=depth_array, y=dac_curve, mode='lines', name='ASME DAC Threshold', line=dict(color='#FF3366', width=2, dash='dash')))
-        fig.add_trace(go.Scatter(x=depth_array, y=-dac_curve, mode='lines', name='DAC Bottom', line=dict(color='#FF3366', width=2, dash='dash'), showlegend=False))
-        
-        fig.update_layout(
-            template="plotly_dark", plot_bgcolor='#0E1117', paper_bgcolor='#0E1117',
-            xaxis_title="Depth into Object (mm)", yaxis_title="Voltage Amplitude (V)",
-            hovermode="x unified", margin=dict(l=0, r=0, t=20, b=0), height=480,
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+def build_ascan_figure(depth, rf, envelope, dac, thickness_mm, flaw_depths):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=depth, y=rf, name="RF (pulse-echo)", mode="lines",
+        line=dict(color=COLORS["rf_line"], width=0.8),
+        fillcolor=COLORS["rf"], fill="tozeroy",
+    ))
+    fig.add_trace(go.Scatter(
+        x=depth, y=envelope, name="Envelope |Hilbert|", mode="lines",
+        line=dict(color=COLORS["envelope"], width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=depth, y=dac, name="Reference DAC", mode="lines",
+        line=dict(color=COLORS["dac"], width=1.8, dash="dash"),
+    ))
+    for i, d in enumerate(flaw_depths, start=1):
+        fig.add_vline(
+            x=d, line_width=1, line_dash="dot", line_color=COLORS["marker"],
+            annotation_text=f"Flaw {i}", annotation_position="top",
         )
-        fig.add_vline(x=thickness_mm, line_width=2, line_dash="dashdot", line_color="#33FF33", annotation_text="Back-wall Boundary")
-        st.plotly_chart(fig, use_container_width=True)
-        
-    with ai_side:
-        st.markdown("**🧠 Autonomous Flaw Characterization**")
-        if is_rejected:
-            for idx, defect in enumerate(critical_defects):
-                st.markdown(f"""
-                <div class="ai-box-danger">
-                    <span class="badge-danger">DEFECT #{idx+1} IDENTIFIED</span><br>
-                    <p style="margin-top:8px; margin-bottom:4px;">🎯 <b>Location:</b> {defect['depth']} mm ({defect['location']})</p>
-                    <p style="margin-top:0px; margin-bottom:4px;">🔬 <b>Type:</b> <span style="color:#FF3366; font-weight:bold;">{defect['type']}</span></p>
-                    <p style="margin-top:0px; margin-bottom:0px;">📉 <b>Signal:</b> {defect['amp']}V (Threshold: {defect['limit']}V)</p>
-                </div>
-                """, unsafe_allow_html=True)
+    fig.add_vline(
+        x=thickness_mm, line_width=1.5, line_dash="dash",
+        line_color="#1B4F72", annotation_text="Back-wall",
+    )
+    fig.update_layout(
+        **CHART,
+        height=520,
+        xaxis_title="Depth (mm)",
+        yaxis_title="Amplitude (arb. units)",
+        title="Simulated A-Scan (depth axis)",
+    )
+    return fig
+
+
+def build_validation_table(engine, depth_array, envelope, probe_freq_hz, targets):
+    rows = []
+    for label, depth_mm, z_def in targets:
+        depth_m = depth_mm / 1000.0
+        t_us = engine.depth_to_tof(depth_m) * 1e6
+        r_val = engine.reflection_coeff(z_def)
+        a_theory = engine.expected_echo_amplitude(depth_m, probe_freq_hz, r_val)
+
+        if label.startswith("Flaw"):
+            mask = (depth_array > depth_mm - 4) & (depth_array < depth_mm + 4)
         else:
-            st.markdown("""
-            <div class="ai-box-success">
-                <span class="badge-info">SYSTEM ONLINE</span><br>
-                <p style="margin-top:8px; color:#00FFCC; font-weight:bold;">Signal Integrity Clear. No discontinuities exceed the ASME DAC curve.</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-with tab2:
-    st.subheader("Automated Parameter Optimization Engine")
-    if is_rejected:
-        compatible_standard = "None"
-        for test_std, test_R in [("Ø 2.0mm (Standard)", 0.16), ("Ø 3.0mm (Relaxed)", 0.28)]:
-            test_dac = engine.generate_dac_curve(time_array, probe_freq_hz, test_R)
-            if enable_tgc: test_dac *= tgc_gain
-            if all(signal_envelope[np.argmin(np.abs(depth_array - d["depth"]))] <= test_dac[np.argmin(np.abs(depth_array - d["depth"]))] for d in critical_defects):
-                compatible_standard = test_std
-                break
-                
-        if compatible_standard != "None":
-            st.success(f"⚙️ **System Recommendation:** Change ASME Reference Standard to **{compatible_standard}** to successfully certify this component under relaxed guidelines.")
+            mask = depth_array > depth_mm - 5
+        if np.any(mask):
+            idx_local = np.where(mask)[0]
+            sim_idx = idx_local[np.argmax(envelope[idx_local])]
         else:
-            st.error("⚙️ **System Recommendation:** Flaws are structurally severe. Component must be sent for mechanical repair (excavation).")
-    else:
-        st.success("Component is perfectly calibrated and accepted. No recalibration needed.")
+            sim_idx = int(np.argmax(envelope))
 
-with tab3:
-    st.subheader("Frequency Domain Analytics & Physics Metadata")
-    near_field_mm = ((0.01 ** 2) * probe_freq_hz) / (4 * velocity) * 1000
-    alpha_eff_np = engine.calculate_effective_attenuation(probe_freq_hz)
-    
-    p_col1, p_col2, p_col3 = st.columns(3)
-    p_col1.metric("Near-Field Zone (N)", f"{near_field_mm:.2f} mm")
-    p_col2.metric("Effective Attenuation (α)", f"{alpha_eff_np:.3f} Np/m")
-    p_col3.metric("Reflection Energy Coefficient", f"{r_coeff:.4f}")
-    
+        sim_depth = depth_array[sim_idx]
+        rows.append({
+            "Reflector": label,
+            "Input depth (mm)": depth_mm,
+            "Theory ToF (µs)": round(t_us, 3),
+            "R (signed)": round(r_val, 4),
+            "Theory amplitude": round(a_theory, 5),
+            "Measured peak depth (mm)": round(sim_depth, 2),
+            "Depth error (mm)": round(sim_depth - depth_mm, 2),
+        })
+    return pd.DataFrame(rows)
 
-    st.markdown("### 🧮 Analytical Validation ($t = 2d/v$ & Exponential Attenuation)")
-    
-    # 1. محاسبه زمان تحلیلی (Theoretical Time)
-    t_flaw1_us = (2 * (defect1_depth_mm / 1000.0) / velocity) * 1e6
-    t_flaw2_us = (2 * (defect2_depth_mm / 1000.0) / velocity) * 1e6
-    t_bwe_us = (2 * (thickness_mm / 1000.0) / velocity) * 1e6
-    
-  
-  
-    A0 = 1.0  
-    amp_flaw1 = A0 * np.exp(-alpha_eff_np * (2 * (defect1_depth_mm / 1000.0))) * abs(r_coeff)
-    amp_flaw2 = A0 * np.exp(-alpha_eff_np * (2 * (defect2_depth_mm / 1000.0))) * abs(r_coeff)
-   
-    amp_bwe = A0 * np.exp(-alpha_eff_np * (2 * (thickness_mm / 1000.0))) * 1.0 
-    
-    val_data = {
-        "Reflector Target": ["Flaw 1", "Flaw 2", "Back-wall (BWE)"],
-        "Depth 'd' (mm)": [defect1_depth_mm, defect2_depth_mm, thickness_mm],
-        "Theoretical ToF 't' (µs)": [f"{t_flaw1_us:.3f}", f"{t_flaw2_us:.3f}", f"{t_bwe_us:.3f}"],
-        "Expected Amplitude (A)": [f"{amp_flaw1:.4f} V", f"{amp_flaw2:.4f} V", f"{amp_bwe:.4f} V"]
+
+st.set_page_config(
+    page_title="Ultrasonic A-Scan Simulator",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+if "export_ready" not in st.session_state:
+    st.session_state.export_ready = False
+    st.session_state.pdf_bytes = None
+    st.session_state.csv_bytes = None
+
+st.markdown(
+    """
+    <style>
+    .main-title { font-size: 1.55rem; font-weight: 700; color: #1B2631; margin-bottom: 0.1rem; }
+    .sub-title { font-size: 0.95rem; color: #5D6D7E; margin-bottom: 1.2rem; line-height: 1.45; }
+    div[data-testid="stMetric"] {
+        background: #F8F9F9; border: 1px solid #D5D8DC;
+        border-radius: 6px; padding: 0.65rem 0.9rem;
     }
-    st.table(pd.DataFrame(val_data))
-    
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+st.markdown(f'<p class="main-title">{PROJECT_TITLE}</p>', unsafe_allow_html=True)
+st.markdown(
+    '<p class="sub-title">One-dimensional pulse-echo simulator: '
+    "Gaussian excitation, acoustic propagation, reflection coefficient, "
+    "and band-limited RF processing.</p>",
+    unsafe_allow_html=True,
+)
 
-    N = len(rf_signal)
-    yf = fft(rf_signal)
-    xf = fftfreq(N, 1/100e6)
-    pos_xf = xf[:N//2] / 1e6
-    pos_yf = np.abs(yf[:N//2])
-    
-    fig_fft = go.Figure()
-    fig_fft.add_trace(go.Scatter(x=pos_xf, y=pos_yf, mode='lines', fill='tozeroy', name='FFT Density', line=dict(color='#B366FF', width=2), fillcolor='rgba(179,102,255,0.15)'))
-    fig_fft.update_layout(template="plotly_dark", plot_bgcolor='#0E1117', paper_bgcolor='#0E1117', xaxis_title="Frequency (MHz)", yaxis_title="Spectral Power", xaxis=dict(range=[0, probe_freq_mhz*2.2]), height=300, margin=dict(l=0,r=0,t=10,b=0))
-    st.plotly_chart(fig_fft, use_container_width=True)
+with st.sidebar:
+    st.header("Simulation inputs")
+    st.subheader("Material")
+    material = st.selectbox(
+        "Specimen",
+        ["Steel (Carbon)", "Aluminum (6061)", "Copper (Pure)", "PVC Plastic", "Custom"],
+    )
+    if material == "Custom":
+        velocity = st.number_input("Velocity c (m/s)", 1000.0, 10000.0, 5900.0, 50.0)
+        density = st.number_input("Density ρ (kg/m³)", 500.0, 20000.0, 7800.0, 50.0)
+        base_alpha = st.number_input("Attenuation α₀ (Np/m)", 0.1, 20.0, 1.5, 0.1)
+    else:
+        presets = {
+            "Steel (Carbon)": (5900.0, 7800.0, 1.5),
+            "Aluminum (6061)": (6320.0, 2700.0, 1.2),
+            "Copper (Pure)": (4700.0, 8960.0, 2.0),
+            "PVC Plastic": (2395.0, 1380.0, 4.5),
+        }
+        velocity, density, base_alpha = presets[material]
+        st.caption(f"c = {velocity} m/s, ρ = {density} kg/m³")
 
+    thickness_mm = st.slider("Thickness (mm)", 20.0, 120.0, 70.0)
 
-with tab4:
-    st.markdown("### 📑 Secure Inspection Report Generator")
-    st.info("💡 **Stealth Mode Active:** Files are locked and hidden from download managers until you click the Compile button.")
-    
-    def generate_pdf_in_memory():
+    st.subheader("Reflectors")
+    depth_lo = 3.0
+    depth_hi = max(thickness_mm - 3.0, depth_lo + 1.0)
+    if "d1_mm" not in st.session_state:
+        st.session_state.d1_mm = min(25.0, depth_hi)
+    if "d2_mm" not in st.session_state:
+        st.session_state.d2_mm = min(50.0, depth_hi)
+    st.session_state.d1_mm = float(np.clip(st.session_state.d1_mm, depth_lo, depth_hi))
+    st.session_state.d2_mm = float(np.clip(st.session_state.d2_mm, depth_lo, depth_hi))
+
+    d1_mm = st.slider(
+        "Flaw 1 depth (mm)", depth_lo, depth_hi, st.session_state.d1_mm, key="sl_d1"
+    )
+    st.session_state.d1_mm = d1_mm
+    f1 = st.radio("Flaw 1 fill", ["Air Void (Crack)", "Water Inclusion"], key="f1")
+    d2_mm = st.slider(
+        "Flaw 2 depth (mm)", depth_lo, depth_hi, st.session_state.d2_mm, key="sl_d2"
+    )
+    st.session_state.d2_mm = d2_mm
+    f2 = st.radio("Flaw 2 fill", ["Air Void (Crack)", "Water Inclusion"], key="f2")
+    z1 = filler_to_impedance(f1)
+    z2 = filler_to_impedance(f2)
+
+    st.subheader("Transducer")
+    f_probe_mhz = st.slider("Center frequency (MHz)", 1.0, 10.0, 5.0, 0.5)
+    dac_label = st.selectbox(
+        "DAC reference level",
+        ["Strict (0.08)", "Standard (0.16)", "Relaxed (0.28)"],
+    )
+    ref_R = {"Strict (0.08)": 0.08, "Standard (0.16)": 0.16, "Relaxed (0.28)": 0.28}[dac_label]
+    use_tgc = st.checkbox("Time-gain compensation (TGC)")
+    tgc_slope = st.slider("TGC slope (dB/mm)", 0.0, 2.5, 0.5, disabled=not use_tgc)
+
+    st.subheader("Processing")
+    snr_db = st.slider("SNR (dB)", 10.0, 50.0, 30.0, 1.0)
+    use_filter = st.checkbox("Bandpass filter (transducer bandwidth)", value=True)
+
+try:
+    fs = 100e6
+    f_probe_hz = f_probe_mhz * 1e6
+    engine = UltrasonicSimulationEngine(
+        velocity, density, base_alpha, thickness_mm / 1000.0, 0.01, fs
+    )
+    defects = [(d1_mm / 1000.0, z1), (d2_mm / 1000.0, z2)]
+    result = run_ascan_pipeline(
+        engine, defects, f_probe_hz, 0.5, fs, snr_db, use_filter, ref_R, use_tgc, tgc_slope
+    )
+
+    depth = result["depth_array"]
+    rf = result["rf_signal"]
+    envelope = result["signal_envelope"]
+    dac = result["dac_curve"]
+    time_array = result["time_array"]
+    tgc_gain = result["tgc_gain"]
+
+    peak_dist = min_peak_distance_samples(velocity, fs)
+    flaw_depths = [d1_mm, d2_mm]
+    validation_targets = [
+        ("Flaw 1", d1_mm, z1), ("Flaw 2", d2_mm, z2), ("Back-wall", thickness_mm, Z_AIR)
+    ]
+    val_df = build_validation_table(engine, depth, envelope, f_probe_hz, validation_targets)
+    max_depth_err = float(np.max(np.abs(val_df["Depth error (mm)"].to_numpy())))
+except Exception as err:
+    st.error(f"Simulation failed: {err}")
+    st.stop()
+
+critical = []
+for idx in find_peaks(envelope, height=dac, distance=peak_dist)[0]:
+    d_mm = depth[idx]
+    if not (3.0 < d_mm < thickness_mm - 2.0):
+        continue
+    match = match_nearest_defect(d_mm, defects)
+    if match:
+        _, z_m = match
+        r_loc = engine.reflection_coeff(z_m)
+        ftype = classify_reflector(engine, z_m)
+    else:
+        r_loc, ftype = 0.0, "Unassigned peak"
+    critical.append({
+        "Depth (mm)": round(d_mm, 2),
+        "Envelope peak": round(envelope[idx], 4),
+        "DAC limit": round(dac[idx], 4),
+        "R": round(r_loc, 4),
+        "RF sign": "+" if rf[idx] >= 0 else "-",
+        "Class": ftype,
+    })
+
+above_dac = len(critical) > 0
+params_key = (
+    velocity, density, base_alpha, thickness_mm, d1_mm, d2_mm, f1, f2,
+    f_probe_mhz, dac_label, use_tgc, tgc_slope, snr_db, use_filter,
+)
+if st.session_state.get("params_key") != params_key:
+    st.session_state.export_ready = False
+    st.session_state.pdf_bytes = None
+    st.session_state.csv_bytes = None
+    st.session_state.params_key = params_key
+
+c1, c2, c3, c4, c5 = st.columns(5)
+c1.metric("Impedance Z", f"{engine.Z_part/1e6:.2f} MRayl")
+c2.metric("Wavelength λ", f"{(velocity/f_probe_hz)*1e3:.2f} mm")
+c3.metric("α (eff.)", f"{engine.effective_attenuation(f_probe_hz):.3f} Np/m")
+c4.metric("Max depth error", f"{max_depth_err:.2f} mm")
+c5.metric("Peaks above DAC", str(len(critical)))
+
+tab_ascan, tab_dac, tab_valid, tab_report = st.tabs([
+    "A-Scan display",
+    "DAC sensitivity",
+    "Analytical validation",
+    "Report export",
+])
+
+with tab_ascan:
+    left, right = st.columns([1.65, 1])
+    with left:
+        st.plotly_chart(
+            build_ascan_figure(depth, rf, envelope, dac, thickness_mm, flaw_depths),
+            width="stretch",
+        )
+        st.caption(
+            "RF retains signed phase from R; envelope uses |Hilbert(RF)| only for peak comparison."
+        )
+    with right:
+        st.subheader("Peak screening (envelope vs DAC)")
+        if above_dac:
+            st.dataframe(pd.DataFrame(critical), hide_index=True, width="stretch")
+        else:
+            st.success("No mid-wall envelope peaks exceed the reference DAC curve.")
+
+with tab_dac:
+    st.subheader("Reference curve sensitivity")
+    if above_dac and critical:
+        alt_levels = [("Standard (0.16)", 0.16), ("Relaxed (0.28)", 0.28)]
+        for name, r_test in alt_levels:
+            test_dac = engine.dac_curve(time_array, f_probe_hz, r_test)
+            if use_tgc:
+                test_dac = test_dac * tgc_gain
+            ok = all(
+                value_at_depth(depth, envelope, row["Depth (mm)"])[0]
+                <= value_at_depth(depth, test_dac, row["Depth (mm)"])[0]
+                for row in critical
+            )
+            st.write(f"**{name}:** {'would pass' if ok else 'still above threshold'}")
+    else:
+        st.info("Enable reflectors above DAC or lower the reference level to run sensitivity checks.")
+
+with tab_valid:
+    st.subheader("Validation against t = 2d/c and exponential attenuation")
+    st.dataframe(val_df, hide_index=True, width="stretch")
+
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Near-field N", f"{engine.near_field_length(f_probe_hz)*1e3:.2f} mm")
+    col_b.metric("R (air|steel)", f"{engine.reflection_coeff(Z_AIR):.4f}")
+    col_c.metric("R (water|steel)", f"{engine.reflection_coeff(z2):.4f}")
+
+    n = len(rf)
+    spectrum = np.abs(fft(rf)[: n // 2])
+    freq_mhz = fftfreq(n, 1 / fs)[: n // 2] / 1e6
+    fig_f = go.Figure(go.Scatter(x=freq_mhz, y=spectrum, fill="tozeroy", name="|FFT(RF)|"))
+    fig_f.add_vline(x=f_probe_mhz, line_dash="dash", line_color=COLORS["envelope"],
+                    annotation_text=f"{f_probe_mhz} MHz")
+    fig_f.update_layout(
+        **CHART, height=320,
+        title="Frequency spectrum of processed RF",
+        xaxis_title="Frequency (MHz)", yaxis_title="Magnitude",
+        xaxis=dict(range=[0, f_probe_mhz * 2.5]),
+    )
+    st.plotly_chart(fig_f, width="stretch")
+
+with tab_report:
+    st.subheader("Inspection summary export")
+
+    def make_pdf():
         pdf = FPDF()
         pdf.add_page()
-        pdf.set_font("Arial", 'B', 16)
-        pdf.cell(0, 10, "OFFICIAL ULTRASONIC NDT INSPECTION REPORT", ln=True, align='C')
-        pdf.set_font("Arial", 'I', 10)
-        pdf.cell(0, 8, f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True, align='C')
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", 'B', 12)
-        pdf.set_fill_color(220, 220, 220)
-        pdf.cell(0, 8, " 1. Material & Component Specification", ln=True, fill=True)
-        pdf.set_font("Arial", '', 11)
-        pdf.cell(0, 8, f" Material Name: {material_choice}", ln=True)
-        pdf.cell(0, 8, f" Acoustic Velocity: {velocity} m/s", ln=True)
-        pdf.cell(0, 8, f" Material Density: {density} kg/m^3", ln=True)
-        pdf.cell(0, 8, f" Tested Thickness: {thickness_mm} mm", ln=True)
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 8, " 2. Transducer & Calibration Parameters", ln=True, fill=True)
-        pdf.set_font("Arial", '', 11)
-        pdf.cell(0, 8, f" Center Frequency: {probe_freq_mhz} MHz", ln=True)
-        pdf.cell(0, 8, f" Hardware TGC Enabled: {'YES' if enable_tgc else 'NO'} (Slope: {tgc_slope} dB/mm)", ln=True)
-        pdf.cell(0, 8, f" Acceptance Standard: ASME {dac_ref_size}", ln=True)
-        pdf.ln(5)
-        
-        pdf.set_font("Arial", 'B', 12)
-        pdf.cell(0, 8, " 3. Automated Defect Evaluation Log", ln=True, fill=True)
-        pdf.set_font("Arial", '', 10)
-        if not is_rejected:
-            pdf.cell(0, 8, " No critical flaws detected. Component meets all structural requirements.", ln=True)
-        else:
-            pdf.cell(40, 8, "Depth (mm)", border=1, align='C')
-            pdf.cell(40, 8, "Peak Amp (V)", border=1, align='C')
-            pdf.cell(40, 8, "DAC Limit (V)", border=1, align='C')
-            pdf.cell(60, 8, "AI Classification", border=1, align='C')
-            pdf.ln()
-            for flaw in critical_defects:
-                pdf.cell(40, 8, str(flaw["depth"]), border=1, align='C')
-                pdf.cell(40, 8, str(flaw["amp"]), border=1, align='C')
-                pdf.cell(40, 8, str(flaw["limit"]), border=1, align='C')
-                pdf.cell(60, 8, str(flaw["type"][:20]), border=1, align='C')
-                pdf.ln()
-        pdf.ln(10)
-        
-        pdf.set_font("Arial", 'B', 14)
-        if is_rejected:
-            pdf.set_text_color(200, 0, 0)
-            pdf.cell(0, 10, "FINAL DISPOSITION: REJECTED", ln=True, align='C')
-        else:
-            pdf.set_text_color(0, 150, 0)
-            pdf.cell(0, 10, "FINAL DISPOSITION: ACCEPTED", ln=True, align='C')
-            
-        return pdf.output(dest='S').encode('latin-1')
+        pdf.set_font("Arial", "B", 14)
+        pdf.cell(0, 9, ascii_safe(PROJECT_TITLE[:70]), ln=True, align="C")
+        pdf.set_font("Arial", "", 10)
+        pdf.cell(0, 7, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), ln=True, align="C")
+        pdf.ln(4)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(0, 7, "Specimen", ln=True)
+        pdf.set_font("Arial", "", 10)
+        for line in [
+            f"Material: {material}",
+            f"c = {velocity} m/s, rho = {density} kg/m3",
+            f"Thickness: {thickness_mm} mm",
+            f"Probe: {f_probe_mhz} MHz, DAC R_ref = {ref_R}",
+        ]:
+            pdf.cell(0, 6, ascii_safe(line), ln=True)
+        pdf.ln(3)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(0, 7, "Validation (max depth error mm)", ln=True)
+        pdf.set_font("Arial", "", 10)
+        pdf.cell(0, 6, ascii_safe(f"{max_depth_err:.3f}"), ln=True)
+        pdf.ln(3)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(0, 7, "Disposition", ln=True)
+        pdf.set_font("Arial", "", 10)
+        txt = "REJECT (peaks above DAC)" if above_dac else "ACCEPT (no mid-wall peaks above DAC)"
+        pdf.cell(0, 6, txt, ln=True)
+        return pdf_to_bytes(pdf)
 
-  
-    if not st.session_state.export_ready:
-        if st.button("⚙️ Compile & Build PDF Report", use_container_width=True):
-            st.session_state.pdf_bytes = generate_pdf_in_memory()
-            st.session_state.csv_bytes = pd.DataFrame({"Depth_mm": depth_array, "RF_Voltage": rf_signal, "Envelope": signal_envelope, "DAC_Curve": dac_curve}).to_csv(index=False).encode('utf-8')
+    if st.button("Generate PDF and CSV", type="primary", key="gen_report"):
+        try:
+            st.session_state.pdf_bytes = make_pdf()
+            st.session_state.csv_bytes = pd.DataFrame({
+                "depth_mm": depth,
+                "rf": rf,
+                "envelope": envelope,
+                "dac": dac,
+            }).to_csv(index=False).encode("utf-8")
             st.session_state.export_ready = True
-            st.rerun() 
+        except Exception as e:
+            st.session_state.export_ready = False
+            st.error(str(e))
 
-    if st.session_state.export_ready:
-        st.success("✅ Files successfully compiled and temporarily unlocked for download!")
-        st.download_button(
-            label="📄 CLICK TO DOWNLOAD SECURE PDF",
-            data=st.session_state.pdf_bytes,
-            file_name=f"ASME_NDT_Report_{datetime.now().strftime('%H%M%S')}.pdf",
-            mime="application/pdf",
-            use_container_width=True
-        )
-
-
-st.markdown("---")
-if st.session_state.export_ready:
-    st.download_button("📥 Download Raw Data Matrix (.csv)", data=st.session_state.csv_bytes, file_name="NDT_Raw_Data.csv", mime="text/csv")
-else:
-    st.info("🔒 Raw CSV data is locked. Click 'Compile & Build PDF Report' in Tab 4 to unlock downloads.")
+    if st.session_state.export_ready and st.session_state.pdf_bytes:
+        st.download_button("Download PDF", st.session_state.pdf_bytes,
+                           f"Ascan_Report_{datetime.now():%Y%m%d_%H%M%S}.pdf",
+                           "application/pdf", key="dl_pdf")
+        st.download_button("Download CSV", st.session_state.csv_bytes,
+                           f"Ascan_Data_{datetime.now():%Y%m%d_%H%M%S}.csv",
+                           "text/csv", key="dl_csv")
