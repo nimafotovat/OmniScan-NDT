@@ -1,6 +1,7 @@
 # Development of a Python-Based Simulator for Ultrasonic Pulse-Echo A-Scan Signal
 
 **Non-Destructive Testing (NDT)** 
+
 **Scope:**one-dimensional pulse-echo.
 
 ---
@@ -26,7 +27,7 @@ Pulse-echo ultrasonics records a one-dimensional time waveform (A-Scan) whose ec
 The transmitted particle velocity is approximated as
 
 $$
-s(t) = A \, \exp\!\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t), \qquad \sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}
+s(t) = A \, \exp\left(-\frac{(t-t_0)^2}{2\sigma^2}\right) \sin(2\pi f_c t), \qquad \sigma = \frac{1}{2\pi f_c \,\mathrm{BW}}
 $$
 
 Implementation: `wave_math.generate_gaussian_pulse`.
