@@ -1,7 +1,7 @@
 # Development of a Python-Based Simulator for Ultrasonic Pulse-Echo A-Scan Signal
 
-**Undergraduate final project — Non-Destructive Testing (NDT)**  
-**Scope:** one-dimensional pulse-echo **A-Scan only** (no B-Scan, no imaging arrays).
+**Non-Destructive Testing (NDT)**  
+**Scope:** one-dimensional pulse-echo.
 
 ---
 
